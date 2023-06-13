@@ -278,9 +278,9 @@ void VoxelGraphEditor::set_generator(Ref<VoxelGeneratorGraph> generator) {
 		Ref<VoxelGraphFunction> graph = generator->get_main_function();
 
 		// Load a default preset when creating new graphs.
-		// TODO Downside is, an empty graph cannot be seen.
-		// But Godot doesnt let us know if the resource has been created from the inspector or not
-		if (graph->get_nodes_count() == 0) {
+		// Downside is, an empty graph cannot be seen. But Godot doesnt let us know if the resource has been created
+		// from the inspector or not, so we had to introduce a special boolean...
+		if (graph->get_nodes_count() == 0 && graph->can_load_default_graph()) {
 			_generator->load_plane_preset();
 		}
 
@@ -408,6 +408,8 @@ void VoxelGraphEditor::clear() {
 			--i;
 		}
 	}
+	_profile_label->set_text("");
+	_compile_result_label->hide();
 }
 
 inline String node_to_gui_name(uint32_t node_id) {
@@ -435,11 +437,11 @@ void VoxelGraphEditor::build_gui_from_graph() {
 
 	// Connections
 
-	std::vector<ProgramGraph::Connection> connections;
-	graph.get_connections(connections);
+	std::vector<ProgramGraph::Connection> all_connections;
+	graph.get_connections(all_connections);
 
-	for (size_t i = 0; i < connections.size(); ++i) {
-		const ProgramGraph::Connection &con = connections[i];
+	for (size_t i = 0; i < all_connections.size(); ++i) {
+		const ProgramGraph::Connection &con = all_connections[i];
 		const String from_node_name = node_to_gui_name(con.src.node_id);
 		const String to_node_name = node_to_gui_name(con.dst.node_id);
 		VoxelGraphEditorNode *to_node_view = get_node_typed<VoxelGraphEditorNode>(*_graph_edit, NodePath(to_node_name));
@@ -554,11 +556,11 @@ void VoxelGraphEditor::update_node_layout(uint32_t node_id) {
 	// Add connections back by reading the graph
 
 	// TODO Optimize: the graph stores an adjacency list, we could use that
-	std::vector<ProgramGraph::Connection> connections;
-	_graph->get_connections(connections);
+	std::vector<ProgramGraph::Connection> all_connections;
+	_graph->get_connections(all_connections);
 
-	for (size_t i = 0; i < connections.size(); ++i) {
-		const ProgramGraph::Connection &con = connections[i];
+	for (size_t i = 0; i < all_connections.size(); ++i) {
+		const ProgramGraph::Connection &con = all_connections[i];
 
 		if (con.dst.node_id == node_id) {
 			graph_edit.connect_node(node_to_gui_name(con.src.node_id), con.src.port_index,
@@ -703,8 +705,8 @@ void VoxelGraphEditor::_on_graph_edit_delete_nodes_request(Array node_names) {
 
 	_undo_redo->create_action(ZN_TTR("Delete Nodes"));
 
-	std::vector<ProgramGraph::Connection> connections;
-	_graph->get_connections(connections);
+	std::vector<ProgramGraph::Connection> all_connections;
+	_graph->get_connections(all_connections);
 
 	for (size_t i = 0; i < to_erase.size(); ++i) {
 		const VoxelGraphEditorNode *node_view = to_erase[i];
@@ -733,8 +735,8 @@ void VoxelGraphEditor::_on_graph_edit_delete_nodes_request(Array node_names) {
 		_undo_redo->add_undo_method(this, "create_node_gui", node_id);
 
 		// Connections undo
-		for (size_t j = 0; j < connections.size(); ++j) {
-			const ProgramGraph::Connection &con = connections[j];
+		for (size_t j = 0; j < all_connections.size(); ++j) {
+			const ProgramGraph::Connection &con = all_connections[j];
 
 			if (con.src.node_id == node_id || con.dst.node_id == node_id) {
 				_undo_redo->add_undo_method(*_graph, "add_connection", con.src.node_id, con.src.port_index,
@@ -1005,7 +1007,12 @@ void VoxelGraphEditor::update_previews(bool with_live_update) {
 		if (result.node_id >= 0) {
 			String node_view_path = node_to_gui_name(result.node_id);
 			VoxelGraphEditorNode *node_view = get_node_typed<VoxelGraphEditorNode>(*_graph_edit, node_view_path);
-			node_view->set_modulate(Color(1, 0.3, 0.1));
+			// If this happens then perhaps it got incorrectly remapped in case it's a node created by the compiler
+			if (node_view != nullptr) {
+				node_view->set_modulate(Color(1, 0.3, 0.1));
+			} else {
+				ZN_PRINT_ERROR("Could not get the node with the error");
+			}
 		}
 		return;
 
